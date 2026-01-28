@@ -7,18 +7,27 @@ from sklearn.ensemble import RandomForestClassifier
 st.set_page_config(layout="wide")
 st.title("📊 RADAR DE OPERAÇÃO M1 COM IA")
 
-st.write("Carregando dados do mercado... Aguarde alguns segundos.")
+# ==============================
+# ESCOLHA DO ATIVO
+# ==============================
+ativo = st.selectbox(
+    "Selecione o ativo:",
+    ["EURUSD=X", "GBPUSD=X", "BTC-USD", "ETH-USD", "AAPL", "TSLA"]
+)
+
+st.write(f"📡 Analisando agora: **{ativo}** | Timeframe: **1 minuto (M1)**")
+
+st.write("Carregando dados do mercado...")
 
 # ==============================
 # BAIXAR DADOS
 # ==============================
-df = yf.download("EURUSD=X", period="2d", interval="1m")
+df = yf.download(ativo, period="2d", interval="1m")
 
 if df.empty:
     st.error("Não foi possível carregar dados.")
     st.stop()
 
-# Corrige colunas multinível (ERRO DO GRÁFICO)
 if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
 
@@ -32,21 +41,17 @@ df['vol'] = df['ret'].rolling(10).std()
 df.dropna(inplace=True)
 
 # ==============================
-# TREINAMENTO IA
+# IA
 # ==============================
 X = df[['ema', 'vol']]
 y = np.where(df['ret'].shift(-1) > 0, 1, 0)
 
-# Garante alinhamento
 X = X[:-1]
 y = y[:-1]
 
 model = RandomForestClassifier(n_estimators=100)
 model.fit(X, y)
 
-# ==============================
-# PREVISÃO
-# ==============================
 ultima = X.iloc[-1:].values
 prob = model.predict_proba(ultima)[0]
 direcao = np.argmax(prob)
@@ -60,11 +65,9 @@ else:
     st.error(f"🔻 PROBABILIDADE DE QUEDA — VENDA ({conf:.1f}%)")
 
 # ==============================
-# GRÁFICO (CORRIGIDO)
+# GRÁFICO
 # ==============================
 st.subheader("📈 Últimos dados do mercado")
-
-grafico = df[['Close', 'ema']].tail(120)
-st.line_chart(grafico)
+st.line_chart(df[['Close', 'ema']].tail(120))
 
 st.caption("Modelo educacional — não é recomendação financeira.")
