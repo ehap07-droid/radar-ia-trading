@@ -1,73 +1,59 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import yfinance as yf
+import asyncio
+import websockets
+import json
 from sklearn.ensemble import RandomForestClassifier
 
-st.set_page_config(layout="wide")
-st.title("📊 RADAR DE OPERAÇÃO M1 COM IA")
+st.set_page_config(page_title="RADAR IA PRO", layout="wide")
+st.title("🚀 RADAR IA PRO — TEMPO REAL")
 
-# ==============================
-# ESCOLHA DO ATIVO
-# ==============================
-ativo = st.selectbox(
-    "Selecione o ativo:",
-    ["EURUSD=X", "GBPUSD=X", "BTC-USD", "ETH-USD", "AAPL", "TSLA"]
-)
+symbol = st.selectbox("Escolha o ativo", ["btcusdt", "ethusdt"])
 
-st.write(f"📡 Analisando agora: **{ativo}** | Timeframe: **1 minuto (M1)**")
+# ---------------- WEBSOCKET BINANCE ----------------
+async def get_realtime_data():
+    url = f"wss://stream.binance.com:9443/ws/{symbol}@trade"
+    async with websockets.connect(url) as ws:
+        while True:
+            msg = await ws.recv()
+            data = json.loads(msg)
+            price = float(data['p'])
+            return price
 
-st.write("Carregando dados do mercado...")
+price = asyncio.run(get_realtime_data())
 
-# ==============================
-# BAIXAR DADOS
-# ==============================
-df = yf.download(ativo, period="2d", interval="1m")
+st.metric("Preço ao vivo", f"${price}")
 
-if df.empty:
-    st.error("Não foi possível carregar dados.")
-    st.stop()
+# ---------------- HISTÓRICO SIMULADO ----------------
+if "prices" not in st.session_state:
+    st.session_state.prices = []
 
-if isinstance(df.columns, pd.MultiIndex):
-    df.columns = df.columns.get_level_values(0)
+st.session_state.prices.append(price)
 
-# ==============================
-# INDICADORES
-# ==============================
-df['ema'] = df['Close'].ewm(span=14).mean()
-df['ret'] = df['Close'].pct_change()
-df['vol'] = df['ret'].rolling(10).std()
+if len(st.session_state.prices) > 200:
+    df = pd.DataFrame(st.session_state.prices, columns=["Close"])
+    df["ema"] = df["Close"].ewm(span=20).mean()
+    df["retorno"] = df["Close"].pct_change()
+    df["alvo"] = np.where(df["retorno"].shift(-1) > 0, 1, 0)
 
-df.dropna(inplace=True)
+    df.dropna(inplace=True)
 
-# ==============================
-# IA
-# ==============================
-X = df[['ema', 'vol']]
-y = np.where(df['ret'].shift(-1) > 0, 1, 0)
+    X = df[["ema", "retorno"]]
+    y = df["alvo"]
 
-X = X[:-1]
-y = y[:-1]
+    model = RandomForestClassifier()
+    model.fit(X, y)
 
-model = RandomForestClassifier(n_estimators=100)
-model.fit(X, y)
+    prob = model.predict_proba(X.iloc[-1:])[0][1]
 
-ultima = X.iloc[-1:].values
-prob = model.predict_proba(ultima)[0]
-direcao = np.argmax(prob)
-conf = prob[direcao] * 100
+    st.subheader("📡 SINAL DA IA")
 
-st.subheader("📡 SINAL DA IA")
+    if prob > 0.6:
+        st.success(f"📈 ALTA provável ({prob*100:.1f}%)")
+    else:
+        st.error(f"📉 QUEDA provável ({(1-prob)*100:.1f}%)")
 
-if direcao == 1:
-    st.success(f"🔺 PROBABILIDADE DE ALTA — COMPRA ({conf:.1f}%)")
+    st.line_chart(df[["Close", "ema"]].tail(100))
 else:
-    st.error(f"🔻 PROBABILIDADE DE QUEDA — VENDA ({conf:.1f}%)")
-
-# ==============================
-# GRÁFICO
-# ==============================
-st.subheader("📈 Últimos dados do mercado")
-st.line_chart(df[['Close', 'ema']].tail(120))
-
-st.caption("Modelo educacional — não é recomendação financeira.")
+    st.warning("Coletando dados ao vivo...")
