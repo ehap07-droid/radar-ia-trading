@@ -1,76 +1,84 @@
 import streamlit as st
 import pandas as pd
-import ta
-import requests
+import numpy as np
+import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier
 
 st.set_page_config(page_title="Radar IA M1", layout="centered")
+
 st.title("📊 RADAR DE OPERAÇÃO M1 COM IA")
+st.caption("Modelo educacional — não é recomendação financeira.")
 
-@st.cache_data(ttl=30)
-def get_data():
-    try:
-        url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=300"
-        data = requests.get(url, timeout=10).json()
-        df = pd.DataFrame(data, columns=[
-            'time','open','high','low','close','volume',
-            'c1','c2','c3','c4','c5','c6'
-        ])
-        df = df[['open','high','low','close','volume']].astype(float)
-        return df
-    except:
-        return None
+st.info("Carregando dados do mercado... Aguarde alguns segundos.")
 
-df = get_data()
+# =========================
+# COLETA DE DADOS
+# =========================
+ticker = "EURUSD=X"  # pode trocar depois
+df = yf.download(ticker, interval="1m", period="5d")
 
-if df is None:
-    st.error("Erro ao conectar ao mercado. Atualize a página.")
+if df.empty:
+    st.error("Não foi possível carregar dados do mercado.")
     st.stop()
 
-# Indicadores
-df['rsi'] = ta.momentum.RSIIndicator(df['close']).rsi()
-df['ema'] = ta.trend.EMAIndicator(df['close'], window=9).ema_indicator()
-df['macd'] = ta.trend.MACD(df['close']).macd()
+# =========================
+# INDICADORES
+# =========================
+df['ema'] = df['Close'].ewm(span=10).mean()
 
-# Alvo
-df['target'] = (df['close'].shift(-1) > df['close']).astype(int)
+delta = df['Close'].diff()
+gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+rs = gain / loss
+df['rsi'] = 100 - (100 / (1 + rs))
 
-df = df.dropna()
+exp1 = df['Close'].ewm(span=12).mean()
+exp2 = df['Close'].ewm(span=26).mean()
+df['macd'] = exp1 - exp2
 
-if len(df) < 10:
-    st.warning("Carregando histórico do mercado... Aguarde alguns segundos.")
-else:
-    X = df[['rsi','ema','macd']]
-    y = df['target']
+# Alvo (se preço subiu na próxima vela)
+df['target'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
 
-    model = RandomForestClassifier()
-    model.fit(X, y)
+# =========================
+# LIMPEZA DE DADOS (CORREÇÃO DO ERRO)
+# =========================
+df = df.replace([np.inf, -np.inf], np.nan)
+df.dropna(inplace=True)
 
-    last = X.iloc[-1:]
-    prediction = model.predict(last)[0]
+if len(df) < 50:
+    st.warning("Coletando dados suficientes do mercado... Aguarde.")
+    st.stop()
 
-    st.subheader("📡 SINAL DA IA")
-
-    if prediction == 1:
-        st.success("✅ PROBABILIDADE DE ALTA — POSSÍVEL COMPRA")
-    else:
-        st.error("🔻 PROBABILIDADE DE QUEDA — POSSÍVEL VENDA")
-
-
-X = df[['rsi','ema','macd']]
+# =========================
+# IA
+# =========================
+features = ['rsi', 'ema', 'macd']
+X = df[features]
 y = df['target']
 
-model = RandomForestClassifier()
+if X.isnull().values.any():
+    st.warning("Ainda há dados inválidos. Aguardando mercado gerar mais histórico.")
+    st.stop()
+
+model = RandomForestClassifier(n_estimators=80)
 model.fit(X, y)
 
 last = X.iloc[-1:]
 prediction = model.predict(last)[0]
+prob = model.predict_proba(last)[0]
 
+# =========================
+# EXIBIÇÃO DO SINAL
+# =========================
 st.subheader("📡 SINAL DA IA")
 
 if prediction == 1:
-    st.success("✅ PROBABILIDADE DE ALTA — POSSÍVEL COMPRA")
+    st.success(f"✅ PROBABILIDADE DE ALTA — COMPRA ({prob[1]*100:.1f}%)")
 else:
-    st.error("🔻 PROBABILIDADE DE QUEDA — POSSÍVEL VENDA")
+    st.error(f"🔻 PROBABILIDADE DE QUEDA — VENDA ({prob[0]*100:.1f}%)")
 
-st.caption("Modelo educacional — não é recomendação financeira.")
+# =========================
+# GRÁFICO
+# =========================
+st.subheader("📈 Últimos dados do mercado")
+st.line_chart(df[['Close', 'ema']].tail(100))
