@@ -1,31 +1,26 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import asyncio
-import websockets
-import json
+import requests
+import time
 from sklearn.ensemble import RandomForestClassifier
 
 st.set_page_config(page_title="RADAR IA PRO", layout="wide")
-st.title("🚀 RADAR IA PRO — TEMPO REAL")
+st.title("🚀 RADAR IA PRO — QUASE TEMPO REAL")
 
-symbol = st.selectbox("Escolha o ativo", ["btcusdt", "ethusdt"])
+symbol = st.selectbox("Escolha o ativo", ["BTCUSDT", "ETHUSDT"])
 
-# ---------------- WEBSOCKET BINANCE ----------------
-async def get_realtime_data():
-    url = f"wss://stream.binance.com:9443/ws/{symbol}@trade"
-    async with websockets.connect(url) as ws:
-        while True:
-            msg = await ws.recv()
-            data = json.loads(msg)
-            price = float(data['p'])
-            return price
+# ---------------- PEGAR PREÇO ATUAL ----------------
+@st.cache_data(ttl=1)
+def get_price(symbol):
+    url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+    data = requests.get(url).json()
+    return float(data["price"])
 
-price = asyncio.run(get_realtime_data())
+price = get_price(symbol)
+st.metric("Preço atual", f"${price}")
 
-st.metric("Preço ao vivo", f"${price}")
-
-# ---------------- HISTÓRICO SIMULADO ----------------
+# ---------------- HISTÓRICO EM MEMÓRIA ----------------
 if "prices" not in st.session_state:
     st.session_state.prices = []
 
@@ -42,7 +37,7 @@ if len(st.session_state.prices) > 200:
     X = df[["ema", "retorno"]]
     y = df["alvo"]
 
-    model = RandomForestClassifier()
+    model = RandomForestClassifier(n_estimators=100)
     model.fit(X, y)
 
     prob = model.predict_proba(X.iloc[-1:])[0][1]
@@ -56,4 +51,8 @@ if len(st.session_state.prices) > 200:
 
     st.line_chart(df[["Close", "ema"]].tail(100))
 else:
-    st.warning("Coletando dados ao vivo...")
+    st.warning("Coletando dados para treinar a IA...")
+
+# ---------------- AUTO REFRESH ----------------
+time.sleep(1)
+st.rerun()
