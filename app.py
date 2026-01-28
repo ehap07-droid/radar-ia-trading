@@ -4,81 +4,67 @@ import numpy as np
 import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier
 
-st.set_page_config(page_title="Radar IA M1", layout="centered")
-
+st.set_page_config(layout="wide")
 st.title("📊 RADAR DE OPERAÇÃO M1 COM IA")
-st.caption("Modelo educacional — não é recomendação financeira.")
 
-st.info("Carregando dados do mercado... Aguarde alguns segundos.")
+st.write("Carregando dados do mercado... Aguarde alguns segundos.")
 
-# =========================
-# COLETA DE DADOS
-# =========================
-ticker = "EURUSD=X"  # pode trocar depois
-df = yf.download(ticker, interval="1m", period="5d")
+# ==============================
+# BAIXAR DADOS
+# ==============================
+df = yf.download("EURUSD=X", period="2d", interval="1m")
 
 if df.empty:
-    st.error("Não foi possível carregar dados do mercado.")
+    st.error("Não foi possível carregar dados.")
     st.stop()
 
-# =========================
+# Corrige colunas multinível (ERRO DO GRÁFICO)
+if isinstance(df.columns, pd.MultiIndex):
+    df.columns = df.columns.get_level_values(0)
+
+# ==============================
 # INDICADORES
-# =========================
-df['ema'] = df['Close'].ewm(span=10).mean()
+# ==============================
+df['ema'] = df['Close'].ewm(span=14).mean()
+df['ret'] = df['Close'].pct_change()
+df['vol'] = df['ret'].rolling(10).std()
 
-delta = df['Close'].diff()
-gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-rs = gain / loss
-df['rsi'] = 100 - (100 / (1 + rs))
-
-exp1 = df['Close'].ewm(span=12).mean()
-exp2 = df['Close'].ewm(span=26).mean()
-df['macd'] = exp1 - exp2
-
-# Alvo (se preço subiu na próxima vela)
-df['target'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
-
-# =========================
-# LIMPEZA DE DADOS (CORREÇÃO DO ERRO)
-# =========================
-df = df.replace([np.inf, -np.inf], np.nan)
 df.dropna(inplace=True)
 
-if len(df) < 50:
-    st.warning("Coletando dados suficientes do mercado... Aguarde.")
-    st.stop()
+# ==============================
+# TREINAMENTO IA
+# ==============================
+X = df[['ema', 'vol']]
+y = np.where(df['ret'].shift(-1) > 0, 1, 0)
 
-# =========================
-# IA
-# =========================
-features = ['rsi', 'ema', 'macd']
-X = df[features]
-y = df['target']
+# Garante alinhamento
+X = X[:-1]
+y = y[:-1]
 
-if X.isnull().values.any():
-    st.warning("Ainda há dados inválidos. Aguardando mercado gerar mais histórico.")
-    st.stop()
-
-model = RandomForestClassifier(n_estimators=80)
+model = RandomForestClassifier(n_estimators=100)
 model.fit(X, y)
 
-last = X.iloc[-1:]
-prediction = model.predict(last)[0]
-prob = model.predict_proba(last)[0]
+# ==============================
+# PREVISÃO
+# ==============================
+ultima = X.iloc[-1:].values
+prob = model.predict_proba(ultima)[0]
+direcao = np.argmax(prob)
+conf = prob[direcao] * 100
 
-# =========================
-# EXIBIÇÃO DO SINAL
-# =========================
 st.subheader("📡 SINAL DA IA")
 
-if prediction == 1:
-    st.success(f"✅ PROBABILIDADE DE ALTA — COMPRA ({prob[1]*100:.1f}%)")
+if direcao == 1:
+    st.success(f"🔺 PROBABILIDADE DE ALTA — COMPRA ({conf:.1f}%)")
 else:
-    st.error(f"🔻 PROBABILIDADE DE QUEDA — VENDA ({prob[0]*100:.1f}%)")
+    st.error(f"🔻 PROBABILIDADE DE QUEDA — VENDA ({conf:.1f}%)")
 
-# =========================
-# GRÁFICO
-# =========================
+# ==============================
+# GRÁFICO (CORRIGIDO)
+# ==============================
 st.subheader("📈 Últimos dados do mercado")
-st.line_chart(df[['Close', 'ema']].tail(100))
+
+grafico = df[['Close', 'ema']].tail(120)
+st.line_chart(grafico)
+
+st.caption("Modelo educacional — não é recomendação financeira.")
