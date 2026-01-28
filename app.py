@@ -37,9 +37,25 @@ df['target'] = (df['close'].shift(-1) > df['close']).astype(int)
 
 df = df.dropna()
 
-if len(df) < 50:
-    st.warning("Dados insuficientes. Aguarde atualização.")
-    st.stop()
+if len(df) < 10:
+    st.warning("Carregando histórico do mercado... Aguarde alguns segundos.")
+else:
+    X = df[['rsi','ema','macd']]
+    y = df['target']
+
+    model = RandomForestClassifier()
+    model.fit(X, y)
+
+    last = X.iloc[-1:]
+    prediction = model.predict(last)[0]
+
+    st.subheader("📡 SINAL DA IA")
+
+    if prediction == 1:
+        st.success("✅ PROBABILIDADE DE ALTA — POSSÍVEL COMPRA")
+    else:
+        st.error("🔻 PROBABILIDADE DE QUEDA — POSSÍVEL VENDA")
+
 
 X = df[['rsi','ema','macd']]
 y = df['target']
