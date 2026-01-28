@@ -7,17 +7,25 @@ from sklearn.ensemble import RandomForestClassifier
 st.set_page_config(page_title="Radar IA M1", layout="centered")
 st.title("📊 RADAR DE OPERAÇÃO M1 COM IA")
 
+@st.cache_data(ttl=30)
 def get_data():
-    url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=300"
-    data = requests.get(url).json()
-    df = pd.DataFrame(data, columns=[
-        'time','open','high','low','close','volume',
-        'c1','c2','c3','c4','c5','c6'
-    ])
-    df = df[['open','high','low','close','volume']].astype(float)
-    return df
+    try:
+        url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=300"
+        data = requests.get(url, timeout=10).json()
+        df = pd.DataFrame(data, columns=[
+            'time','open','high','low','close','volume',
+            'c1','c2','c3','c4','c5','c6'
+        ])
+        df = df[['open','high','low','close','volume']].astype(float)
+        return df
+    except:
+        return None
 
 df = get_data()
+
+if df is None:
+    st.error("Erro ao conectar ao mercado. Atualize a página.")
+    st.stop()
 
 # Indicadores
 df['rsi'] = ta.momentum.RSIIndicator(df['close']).rsi()
@@ -27,27 +35,26 @@ df['macd'] = ta.trend.MACD(df['close']).macd()
 # Alvo
 df['target'] = (df['close'].shift(-1) > df['close']).astype(int)
 
-# Remove qualquer linha com valor vazio
 df = df.dropna()
+
+if len(df) < 50:
+    st.warning("Dados insuficientes. Aguarde atualização.")
+    st.stop()
 
 X = df[['rsi','ema','macd']]
 y = df['target']
 
-# Treinar modelo apenas se houver dados suficientes
-if len(df) > 50:
-    model = RandomForestClassifier()
-    model.fit(X, y)
+model = RandomForestClassifier()
+model.fit(X, y)
 
-    last = X.iloc[-1:]
-    prediction = model.predict(last)[0]
+last = X.iloc[-1:]
+prediction = model.predict(last)[0]
 
-    st.subheader("📡 SINAL DA IA")
+st.subheader("📡 SINAL DA IA")
 
-    if prediction == 1:
-        st.success("✅ PROBABILIDADE DE ALTA — POSSÍVEL COMPRA")
-    else:
-        st.error("🔻 PROBABILIDADE DE QUEDA — POSSÍVEL VENDA")
+if prediction == 1:
+    st.success("✅ PROBABILIDADE DE ALTA — POSSÍVEL COMPRA")
 else:
-    st.warning("Carregando dados do mercado... Aguarde alguns segundos.")
+    st.error("🔻 PROBABILIDADE DE QUEDA — POSSÍVEL VENDA")
 
 st.caption("Modelo educacional — não é recomendação financeira.")
